@@ -223,42 +223,58 @@ async function confirmarVendaFinal() {
     const nome = document.getElementById('cli-nome').value;
     const valorLimpo = limparMoeda(document.getElementById('venda-valor-final').value);
     
+    // 1. Validações Iniciais
     if(!nome || valorLimpo <= 0) return alert("Preencha nome e valor!");
     if(!confirm(`Confirmar venda para ${nome} no valor de ${formatarMoeda(valorLimpo)}?`)) return;
 
     const btn = document.getElementById('btn-finalizar-venda');
-    btn.innerText = "Processando..."; btn.disabled = true;
+    btn.innerText = "Processando..."; 
+    btn.disabled = true;
 
     const sn = document.getElementById('venda-select-item').value;
     const item = DADOS_GLOBAIS.estoque.find(i => String(i.ID_SN) === String(sn));
     const cpf = document.getElementById('cli-cpf').value;
 
-    // Preencher PDF
-    document.getElementById('pdf-data').innerText = new Date().toLocaleDateString('pt-BR');
-    document.getElementById('pdf-cliente').innerText = nome;
-    document.getElementById('pdf-cpf').innerText = cpf || "---";
-    document.getElementById('pdf-prod-nome').innerText = item.PRODUTO;
-    document.getElementById('pdf-prod-sn').innerText = "SN: " + sn;
-    document.getElementById('pdf-prod-valor').innerText = formatarMoeda(valorLimpo);
-    document.getElementById('pdf-total').innerText = formatarMoeda(valorLimpo);
-    
-    const recibo = document.getElementById('area-recibo');
-    recibo.style.display = 'block';
+    // 2. Preparar os dados para o envio
+    const dadosVenda = { 
+        acao: "VENDER_PRODUTO", 
+        imei: sn, 
+        produto: item.PRODUTO, 
+        valorFinal: valorLimpo, 
+        pagamento: document.getElementById('venda-pagamento').value, 
+        cliente: nome + (cpf ? " (CPF: "+cpf+")" : "") 
+    };
 
     try {
+        // 3. Tentar registrar a venda primeiro
+        // Usamos await para esperar a conclusão do fetch antes de seguir
+        await fetch(URL_API, { method: 'POST', mode: 'no-cors', body: JSON.stringify(dadosVenda) });
+
+        // 4. Se chegou aqui sem cair no 'catch', a venda foi enviada.
+        // Agora preenchemos e geramos o recibo.
+        document.getElementById('pdf-data').innerText = new Date().toLocaleDateString('pt-BR');
+        document.getElementById('pdf-cliente').innerText = nome;
+        document.getElementById('pdf-cpf').innerText = cpf || "---";
+        document.getElementById('pdf-prod-nome').innerText = item.PRODUTO;
+        document.getElementById('pdf-prod-sn').innerText = "SN: " + sn;
+        document.getElementById('pdf-prod-valor').innerText = formatarMoeda(valorLimpo);
+        document.getElementById('pdf-total').innerText = formatarMoeda(valorLimpo);
+        
+        const recibo = document.getElementById('area-recibo');
+        recibo.style.display = 'block';
+
+        // Gera o PDF
         await html2pdf().from(recibo).save(`Recibo_${nome}.pdf`);
         recibo.style.display = 'none';
-        const dados = { 
-            acao: "VENDER_PRODUTO", 
-            imei: sn, 
-            produto: item.PRODUTO, 
-            valorFinal: valorLimpo, 
-            pagamento: document.getElementById('venda-pagamento').value, 
-            cliente: nome + (cpf ? " (CPF: "+cpf+")" : "") 
-        };
-        await executarPost(dados, "Venda Realizada!");
+
+        // 5. Mensagem de sucesso e recarga
+        alert("Venda registrada e recibo gerado com sucesso!");
+        location.reload();
+
     } catch (e) { 
-        alert("Erro no PDF/Venda"); 
+        // Se houver erro de rede, o PDF não será gerado e o botão volta ao normal
+        console.error("Erro na operação:", e);
+        alert("Erro ao registrar venda. O recibo não foi gerado. Verifique sua conexão."); 
         btn.disabled = false; 
         btn.innerText = "Finalizar Venda"; 
     }
