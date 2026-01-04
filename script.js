@@ -1,8 +1,40 @@
-const URL_API = "https://script.google.com/macros/s/AKfycbyL9CY04s6DyLhvjx2mvoWT2PBDp8VLRE9JpIHLhoLSy-xAGPjeeEo7cX7jhmBUvzN7xA/exec";
+const URL_API = "https://script.google.com/macros/s/AKfycbzS_fuG0LNhfvMPdr5WKGK57ULvf8_xaAoAMgxeoLmcoMondkP2-zcc22Bv_Us5WCr5ww/exec";
 let DADOS_GLOBAIS = { estoque: [], financeiro: [] };
 let meuGrafico = null;
+let timerInatividade; // Variável para controlar o tempo de bloqueio
 
-// --- 1. MÁSCARA DE MOEDA (Otimizada) ---
+// --- LÓGICA DE INATIVIDADE ---
+function resetarTimer() {
+    clearTimeout(timerInatividade);
+    // 3600000 ms = 1 hora
+    const tempoLimite = 60 * 60 * 1000; 
+    timerInatividade = setTimeout(() => {
+        logoutInatividade();
+    }, tempoLimite);
+}
+
+function logoutInatividade() {
+    localStorage.removeItem('mks_autenticado');
+    const loginOverlay = document.getElementById('login-overlay');
+    if (loginOverlay) {
+        loginOverlay.style.display = 'flex';
+        const msg = document.getElementById('msg-login');
+        if (msg) {
+            msg.innerText = "Sessão expirada por inatividade.";
+            msg.style.color = "orange";
+        }
+    }
+}
+
+function iniciarMonitoramento() {
+    const eventos = ['mousedown', 'mousemove', 'keypress', 'scroll', 'touchstart'];
+    eventos.forEach(evento => {
+        document.addEventListener(evento, resetarTimer, true);
+    });
+    resetarTimer();
+}
+
+// --- 1. MÁSCARA DE MOEDA ---
 function aplicarMascaraMoeda(seletor) {
     const campo = document.querySelector(seletor);
     if (!campo) return;
@@ -16,14 +48,12 @@ function aplicarMascaraMoeda(seletor) {
 
 // --- UTILITÁRIOS ---
 function formatarMoeda(valor) {
-    // Garante que o valor seja tratado como número antes de formatar
     let v = typeof valor === 'number' ? valor : limparMoeda(valor);
     return v.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
 }
 
 function limparMoeda(valor) {
     if (!valor) return 0;
-    // Remove R$, espaços e pontos de milhar, troca vírgula por ponto
     let limpo = String(valor).replace(/[R$\s.]/g, '').replace(',', '.');
     return parseFloat(limpo) || 0;
 }
@@ -193,13 +223,10 @@ function renderFinanceiro() {
         }).reverse().join('');
 }
 
-// --- LOGICA DE VENDA CORRIGIDA ---
 function atualizarValorSugerido() {
     const sn = document.getElementById('venda-select-item').value;
-    // Comparação forçada como string para evitar erros de tipo
     const item = DADOS_GLOBAIS.estoque.find(i => String(i.ID_SN) === String(sn));
     if (item) {
-        // Formata o valor antes de inserir para que a máscara não quebre
         document.getElementById('venda-valor-final').value = formatarMoeda(item.VALOR_VENDA);
     }
 }
@@ -209,12 +236,9 @@ function abrirModalVenda() {
     const select = document.getElementById('venda-select-item');
     select.innerHTML = disp.map(i => `<option value="${i.ID_SN}">${i.PRODUTO} (${i.ID_SN})</option>`).join('');
     document.getElementById('modalVenda').style.display = 'flex';
-    
-    // Resetar campos
     document.getElementById('cli-nome').value = "";
     document.getElementById('cli-cpf').value = "";
     voltarPassoVenda();
-    
     atualizarValorSugerido();
     aplicarMascaraMoeda('#venda-valor-final');
 }
@@ -223,7 +247,6 @@ async function confirmarVendaFinal() {
     const nome = document.getElementById('cli-nome').value;
     const valorLimpo = limparMoeda(document.getElementById('venda-valor-final').value);
     
-    // 1. Validações Iniciais
     if(!nome || valorLimpo <= 0) return alert("Preencha nome e valor!");
     if(!confirm(`Confirmar venda para ${nome} no valor de ${formatarMoeda(valorLimpo)}?`)) return;
 
@@ -235,7 +258,6 @@ async function confirmarVendaFinal() {
     const item = DADOS_GLOBAIS.estoque.find(i => String(i.ID_SN) === String(sn));
     const cpf = document.getElementById('cli-cpf').value;
 
-    // 2. Preparar os dados para o envio
     const dadosVenda = { 
         acao: "VENDER_PRODUTO", 
         imei: sn, 
@@ -246,12 +268,8 @@ async function confirmarVendaFinal() {
     };
 
     try {
-        // 3. Tentar registrar a venda primeiro
-        // Usamos await para esperar a conclusão do fetch antes de seguir
         await fetch(URL_API, { method: 'POST', mode: 'no-cors', body: JSON.stringify(dadosVenda) });
 
-        // 4. Se chegou aqui sem cair no 'catch', a venda foi enviada.
-        // Agora preenchemos e geramos o recibo.
         document.getElementById('pdf-data').innerText = new Date().toLocaleDateString('pt-BR');
         document.getElementById('pdf-cliente').innerText = nome;
         document.getElementById('pdf-cpf').innerText = cpf || "---";
@@ -263,18 +281,14 @@ async function confirmarVendaFinal() {
         const recibo = document.getElementById('area-recibo');
         recibo.style.display = 'block';
 
-        // Gera o PDF
         await html2pdf().from(recibo).save(`Recibo_${nome}.pdf`);
         recibo.style.display = 'none';
 
-        // 5. Mensagem de sucesso e recarga
         alert("Venda registrada e recibo gerado com sucesso!");
         location.reload();
-
     } catch (e) { 
-        // Se houver erro de rede, o PDF não será gerado e o botão volta ao normal
         console.error("Erro na operação:", e);
-        alert("Erro ao registrar venda. O recibo não foi gerado. Verifique sua conexão."); 
+        alert("Erro ao registrar venda. O recibo não foi gerado."); 
         btn.disabled = false; 
         btn.innerText = "Finalizar Venda"; 
     }
@@ -317,8 +331,6 @@ function fecharModal(id) { document.getElementById(id).style.display = 'none'; }
 function proximoPassoVenda() { document.getElementById('venda-step-1').style.display = 'none'; document.getElementById('venda-step-2').style.display = 'block'; }
 function voltarPassoVenda() { document.getElementById('venda-step-1').style.display = 'block'; document.getElementById('venda-step-2').style.display = 'none'; }
 
-// ... Todo o seu código anterior aqui ...
-
 function toggleFiltrosMobile() {
     const container = document.getElementById('container-datas-mobile');
     if (container.style.display === 'none' || container.style.display === '') {
@@ -328,4 +340,56 @@ function toggleFiltrosMobile() {
     }
 }
 
-window.onload = fetchData;
+async function realizarLogin() {
+    const senha = document.getElementById('senha-login').value;
+    const btn = document.getElementById('btn-entrar');
+    const msg = document.getElementById('msg-login');
+
+    if (!senha) return alert("Digite a senha!");
+    btn.innerText = "Verificando...";
+    btn.disabled = true;
+
+    try {
+        const response = await fetch(URL_API, {
+            method: 'POST',
+            body: JSON.stringify({ acao: "VERIFICAR_LOGIN", senha: senha })
+        });
+        const resultado = await response.text();
+
+        if (resultado.trim() === "SUCESSO") {
+            localStorage.setItem('mks_autenticado', 'true');
+            document.getElementById('login-overlay').style.display = 'none';
+            iniciarMonitoramento(); // Inicia timer após login
+        } else {
+            msg.innerText = "Senha incorreta!";
+            msg.style.color = "#ef4444";
+            btn.innerText = "Entrar";
+            btn.disabled = false;
+        }
+    } catch (e) {
+        alert("Erro de conexão.");
+        btn.disabled = false;
+        btn.innerText = "Entrar";
+    }
+}
+
+function checarAcesso() {
+    const loginOverlay = document.getElementById('login-overlay');
+    if (localStorage.getItem('mks_autenticado') !== 'true') {
+        if (loginOverlay) loginOverlay.style.display = 'flex';
+    } else {
+        if (loginOverlay) loginOverlay.style.display = 'none';
+    }
+}
+
+// Inicialização única e organizada
+checarAcesso(); 
+
+window.onload = () => {
+    checarAcesso(); 
+    fetchData();
+    // Se já estiver logado ao abrir a página, inicia o timer de inatividade
+    if (localStorage.getItem('mks_autenticado') === 'true') {
+        iniciarMonitoramento();
+    }
+};
